@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS = {
   expiryAlertDays: 30,
   notifyLowStock: true,
   notifyExpiry: true,
+  notifyPriceChanges: true,
 };
 
 let settings = { ...DEFAULT_SETTINGS };
@@ -299,6 +300,8 @@ function wireButtons() {
   $('#buy-discount').addEventListener('input', updateBuyPreview);
   $('#buy-add').addEventListener('click', () => addBuyLine($('#buy-qty').value));
   $('#cart-place').addEventListener('click', placeOrder);
+  $('#cart-auto').addEventListener('click', autoGenerateOrder);
+  $('#db-auto-order').addEventListener('click', autoGenerateOrder);
   $('#cart-copy').addEventListener('click', copyOrder);
   $('#cart-clear').addEventListener('click', () => {
     cart = [];
@@ -315,6 +318,20 @@ function wireButtons() {
       message: 'Browser notifications are working ✔',
     })
   );
+  $('#pf-sync-prices').addEventListener('click', async () => {
+    const btn = $('#pf-sync-prices');
+    btn.disabled = true;
+    btn.textContent = '⏳ Syncing…';
+    const res = await chrome.runtime.sendMessage({ type: 'refreshPrices' });
+    btn.disabled = false;
+    btn.textContent = '🔄 Sync MedEx prices now';
+    renderAll();
+    toast(
+      res && res.checked
+        ? `Synced ${res.checked} product page(s) — ${res.updated} price change(s) found.`
+        : 'Nothing to sync (no inventory yet).'
+    );
+  });
   $('#pg-change').addEventListener('click', changePassword);
   $('#mx-go').addEventListener('click', runMedexSearch);
   $('#mx-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') runMedexSearch(); });
@@ -704,7 +721,7 @@ function renderBuy() {
         .map(
           (l, idx) => `
       <div class="cart-line">
-        <div><div class="c-name">${esc(l.name)}</div><div class="c-sub">${esc(l.packInfo)}${l.discount ? ` · −${l.discount}%` : ''}</div></div>
+        <div><div class="c-name">${esc(l.name)}</div><div class="c-sub">${esc(l.packInfo)}${l.discount ? ` · −${l.discount}%` : ''}${l.reason ? ` · ⚡ ${esc(l.reason)}` : ''}</div></div>
         <div>${l.qty} pcs × ${l.unitPrice != null ? fmt(l.unitPrice) : '—'}</div>
         <div><b>${fmt(lineTotal(l))}</b></div>
         <button class="icon-btn danger" data-idx="${idx}" title="Remove">✕</button>
@@ -902,6 +919,7 @@ function fillSettingsForm() {
   $('#pf-expirydays').value = settings.expiryAlertDays;
   $('#pf-notify-low').checked = !!settings.notifyLowStock;
   $('#pf-notify-expiry').checked = !!settings.notifyExpiry;
+  $('#pf-notify-price').checked = !!settings.notifyPriceChanges;
   renderBuilder();
   renderPxManage();
 }
@@ -912,9 +930,71 @@ function savePreferences() {
   settings.expiryAlertDays = Math.max(1, parseInt($('#pf-expirydays').value, 10) || 30);
   settings.notifyLowStock = $('#pf-notify-low').checked;
   settings.notifyExpiry = $('#pf-notify-expiry').checked;
+  settings.notifyPriceChanges = $('#pf-notify-price').checked;
   saveAll();
   renderAll();
   toast('Preferences saved ✔');
+}
+
+/* ═════════ auto order generation ═════════ */
+
+/**
+ * Builds the whole order draft automatically:
+ *  1. prescription shortfalls (course pieces you don't have), then
+ *  2. restock-to-threshold for low / out-of-stock items.
+ * Combined per medicine (no duplicate lines), default discount applied.
+ */
+function autoGenerateOrder() {
+  if (!inventory.length) return toast('Inventory is empty — add medicines first.', true);
+  const wanted = new Map(); // itemId -> {qty, reason}
+
+  for (const p of prescriptions) {
+    for (const row of p.items) {
+      const item = inventory.find((i) => i.id === row.invId);
+      if (!item) continue;
+      const shortfall = Math.max(0, rxNeeded(row) - item.qty);
+      if (shortfall <= 0) continue;
+      const entry = wanted.get(item.id) || { qty: 0, reason: '' };
+      entry.qty = Math.max(entry.qty, shortfall);
+      entry.reason = entry.reason || `prescription "${p.title}"`;
+      wanted.set(item.id, entry);
+    }
+  }
+
+  for (const item of inventory) {
+    if (itemStatus(item) === 'ok') continue;
+    const need = Math.max(0, itemThreshold(item) - item.qty);
+    if (need <= 0) continue;
+    const entry = wanted.get(item.id) || { qty: 0, reason: '' };
+    if (entry.qty) entry.reason += ' + restock';
+    else {
+      entry.qty = need;
+      entry.reason = entry.reason || 'restock to threshold';
+    }
+    wanted.set(item.id, entry);
+  }
+
+  if (!wanted.size) {
+    return toast('Nothing to auto-order — stock and prescriptions are already covered ✔');
+  }
+
+  wanted.forEach((entry, key) => {
+    const item = inventory.find((i) => i.id === key);
+    cart.push({
+      key,
+      name: item.name,
+      qty: entry.qty,
+      unitPrice: item.unitPrice,
+      discount: settings.defaultDiscount ?? 0,
+      packInfo: item.packSize ? `${item.packSize} pcs/pack` : '',
+      reason: entry.reason,
+    });
+  });
+
+  saveAll();
+  renderAll();
+  showView('buy');
+  toast(`⚡ Auto-order generated: ${wanted.size} line(s) — review and place.`);
 }
 
 async function changePassword() {

@@ -3,23 +3,39 @@
  * Runs the daily low-stock / expiry check and shows browser notifications.
  */
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   await seedDefaults();
   chrome.alarms.create('daily-check', { periodInMinutes: 720 });
+  chrome.alarms.create('price-refresh', { periodInMinutes: 720 });
   checkAlerts();
+  // open the full app directly on first install — zero friction
+  if (details.reason === 'install') {
+    chrome.tabs.create({ url: chrome.runtime.getURL('app.html') });
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create('daily-check', { periodInMinutes: 720 });
+  chrome.alarms.create('price-refresh', { periodInMinutes: 720 });
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'daily-check') checkAlerts();
+  if (alarm.name === 'price-refresh') refreshPrices();
+});
+
+// clicking the toolbar icon opens the full app directly (no popup)
+chrome.action.onClicked.addListener(() => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('app.html') });
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === 'checkAlerts') {
     checkAlerts().then((res) => sendResponse(res));
+    return true; // async
+  }
+  if (msg && msg.type === 'refreshPrices') {
+    refreshPrices().then((res) => sendResponse(res));
     return true; // async
   }
   if (msg && msg.type === 'notify') {
@@ -58,6 +74,71 @@ function daysUntil(dateStr) {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   return Math.round((d - now) / 86400000);
+}
+
+/**
+ * Auto price refresh: re-fetches every inventory item's MedEx product page,
+ * updates unit/strip price & pack size, and notifies about changes.
+ * Runs on a daily alarm, or on demand from the app.
+ */
+async function refreshPrices() {
+  const { inventory, settings } = await chrome.storage.local.get([
+    'inventory',
+    'settings',
+  ]);
+  const inv = Array.isArray(inventory) ? inventory : [];
+  if (!inv.length) return { updated: 0, checked: 0 };
+
+  const changes = [];
+  let checked = 0;
+
+  for (const item of inv) {
+    if (!item.url) continue;
+    try {
+      const res = await fetch(item.url, { credentials: 'omit' });
+      if (!res.ok) continue;
+      const html = await res.text();
+      checked++;
+
+      const up = /Unit\s*Price:\s*(?:৳|Tk)\s*([\d.,]+)/i.exec(html);
+      const pk = /\((\d+)\s*[x×]\s*(\d+):\s*(?:৳|Tk)\s*([\d.,]+)/i.exec(html);
+      const st = /Strip\s*Price:\s*(?:৳|Tk)\s*([\d.,]+)/i.exec(html);
+
+      const newUnit = up ? parseFloat(up[1].replace(/,/g, '')) : null;
+      const newPack = pk ? parseInt(pk[1], 10) * parseInt(pk[2], 10) : null;
+      const newStrip = st ? parseFloat(st[1].replace(/,/g, '')) : null;
+
+      if (newUnit != null && item.unitPrice != null && newUnit !== item.unitPrice) {
+        changes.push(
+          `${item.name}: ৳${item.unitPrice.toFixed(2)} → ৳${newUnit.toFixed(2)} per pc`
+        );
+      }
+      if (newUnit != null) item.unitPrice = newUnit;
+      if (newPack != null) item.packSize = newPack;
+      if (newStrip != null) item.stripPrice = newStrip;
+    } catch (e) {
+      // network hiccup on one product must not abort the whole sync
+    }
+  }
+
+  await chrome.storage.local.set({
+    inventory: inv,
+    lastPriceSync: new Date().toISOString(),
+  });
+
+  if (changes.length && settings?.notifyPriceChanges !== false) {
+    chrome.notifications.create(`medi-price-${Date.now()}`, {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'MediTrack — MedEx prices updated',
+      message:
+        `${changes.length} price change(s):\n` +
+        changes.slice(0, 6).join('\n') +
+        (changes.length > 6 ? `\n… and ${changes.length - 6} more` : ''),
+      priority: 1,
+    });
+  }
+  return { updated: changes.length, checked };
 }
 
 /** Reads the inventory and fires one combined notification for low stock + expiry. */

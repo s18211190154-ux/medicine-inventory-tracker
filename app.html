@@ -39,10 +39,15 @@
           <button class="btn primary" id="db-open-inventory">+ Manage inventory</button>
         </header>
         <div class="stat-grid">
-          <div class="card stat-card accent-teal"><div class="stat-num" id="st-total">0</div><div class="stat-lbl">Medicines tracked</div></div>
+          <div class="card stat-card accent-teal">
+            <div class="stat-num" id="st-total">0</div><div class="stat-lbl">Medicines tracked</div>
+          </div>
           <div class="card stat-card accent-amber"><div class="stat-num" id="st-low">0</div><div class="stat-lbl">Low / out of stock</div></div>
           <div class="card stat-card accent-red"><div class="stat-num" id="st-expiring">0</div><div class="stat-lbl">Expiring / expired</div></div>
           <div class="card stat-card accent-blue"><div class="stat-num" id="st-value">৳ 0</div><div class="stat-lbl">Stock value (est.)</div></div>
+        </div>
+        <div class="row-gap" style="margin-bottom:18px">
+          <button class="btn primary" id="db-auto-order">⚡ Auto-generate order</button>
         </div>
         <div class="two-col">
           <div class="card">
@@ -103,7 +108,8 @@
             <button class="btn primary" id="buy-add">Add to order</button>
           </div>
           <div class="card">
-            <h3>🧾 Order draft</h3>
+            <h3>🧾 Order draft <button class="btn tiny primary" id="cart-auto" style="margin-left:auto">⚡ Auto-generate</button></h3>
+            <p class="hint">Auto-generate fills the draft for you: prescription shortfalls first, then restock-to-threshold for low/out-of-stock items. Review, adjust, place.</p>
             <div id="cart-list" class="cart-list"></div>
             <div id="cart-totals"></div>
             <div class="row-gap">
@@ -163,9 +169,11 @@
               </div>
               <label class="check"><input type="checkbox" id="pf-notify-low" /> Browser notifications for low stock</label>
               <label class="check"><input type="checkbox" id="pf-notify-expiry" /> Browser notifications for expiring meds</label>
+              <label class="check"><input type="checkbox" id="pf-notify-price" /> Notify when MedEx prices change (auto-synced)</label>
               <div class="row-gap">
                 <button class="btn primary" id="pf-save">Save preferences</button>
                 <button class="btn subtle" id="pf-test-notify">🔔 Send test notification</button>
+                <button class="btn subtle" id="pf-sync-prices">🔄 Sync MedEx prices now</button>
               </div>
             </div>
 

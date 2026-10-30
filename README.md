@@ -12,7 +12,9 @@ A Chrome extension for tracking personal/home medicine inventory with product da
 |---|---|
 | 📦 | **Inventory** — track how many pieces (pcs) of each medicine remain, with +/- counters, per-item low-stock thresholds and expiry dates |
 | 🔍 | **Source from medex.com.bd** — in Settings, search MedEx (by brand or generic name), select a product, and the extension fetches its **unit price, strip price and pack size** from the product page and adds it to your inventory |
-| 🔔 | **Browser notifications** — daily check + on-demand: low-stock, out-of-stock and expiring-soon alerts |
+| 🔄 | **Auto price sync** — a background job re-fetches every product page daily, updates prices/pack sizes automatically and notifies you when a price changes (manual "Sync now" button also in Settings) |
+| ⚡ | **Auto-order generation** — one click fills the whole order draft for you: prescription shortfalls first, then restock-to-threshold for low/out-of-stock items. Review, place. |
+| 🔔 | **Browser notifications** — daily check + on-demand: low-stock, out-of-stock, expiring-soon and price-change alerts |
 | 🛒 | **Buy / Order builder** — click how many pieces you need, auto price × qty calculation, global + per-line **discount %**, order draft, totals, copyable order text; placing an order deducts stock |
 | 📋 | **Prescription calculator** — add prescriptions (medicine, dose per intake, intakes/day, duration) and MediTrack computes how many pcs the full course needs, how many days your current stock covers, and the shortfall you need to buy — push the shortfall straight into the Buy tab |
 | 🔐 | **Password-protected settings** — the whole app unlocks with your password; password hash (SHA-256) is stored locally, never in plaintext |
@@ -25,7 +27,7 @@ A Chrome extension for tracking personal/home medicine inventory with product da
 2. Open Chrome → `chrome://extensions`.
 3. Enable **Developer mode** (top right).
 4. Click **Load unpacked** and select this folder.
-5. Click the 💊 extension icon → **Open full app**.
+5. Click the 💊 extension icon — the full app opens directly in a new tab (no popups, no friction). It also opens automatically on first install.
 
 ## 🔑 Password
 
@@ -42,9 +44,8 @@ There is **no default password** in this repo. On first launch the app asks you 
 ## 🗂 Project structure
 
 ```
-├── manifest.json      # MV3 manifest
-├── background.js      # service worker: alarms, daily alert check, notifications
-├── popup.{html,css,js}# toolbar quick view
+├── manifest.json      # MV3 manifest (toolbar icon opens the app directly)
+├── background.js      # service worker: daily alert check, auto MedEx price sync, notifications
 ├── app.{html,css,js}  # the full app (SPA in a new tab)
 ├── icons/             # generated icons
 └── tools/make-icons.ps1
