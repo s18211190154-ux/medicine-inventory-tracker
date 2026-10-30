@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediTrack BD — Medicine Inventory</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div id="app" class="app">
+
+    <!-- ══════════ Sidebar ══════════ -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-icon">💊</span>
+        <div><div class="brand-name">MediTrack <em>BD</em></div>
+        <div class="brand-sub">Inventory &amp; orders</div></div>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn active" data-view="dashboard">🏠 <span>Dashboard</span></button>
+        <button class="nav-btn" data-view="inventory">📦 <span>Inventory</span></button>
+        <button class="nav-btn" data-view="buy">🛒 <span>Buy</span><span class="pill" id="cart-pill" hidden>0</span></button>
+        <button class="nav-btn" data-view="prescriptions">📋 <span>Prescriptions</span></button>
+        <button class="nav-btn" data-view="orders">🧾 <span>Orders</span></button>
+        <button class="nav-btn" data-view="settings">⚙️ <span>Settings</span></button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="foot-data">Data source<br /><b>medex.com.bd</b></div>
+      </div>
+    </aside>
+
+    <!-- ══════════ Main ══════════ -->
+    <main class="main">
+
+      <!-- ── Dashboard ── -->
+      <section class="view active" id="view-dashboard">
+        <header class="view-head">
+          <h1>Dashboard</h1>
+          <button class="btn primary" id="db-open-inventory">+ Manage inventory</button>
+        </header>
+        <div class="stat-grid">
+          <div class="card stat-card accent-teal"><div class="stat-num" id="st-total">0</div><div class="stat-lbl">Medicines tracked</div></div>
+          <div class="card stat-card accent-amber"><div class="stat-num" id="st-low">0</div><div class="stat-lbl">Low / out of stock</div></div>
+          <div class="card stat-card accent-red"><div class="stat-num" id="st-expiring">0</div><div class="stat-lbl">Expiring / expired</div></div>
+          <div class="card stat-card accent-blue"><div class="stat-num" id="st-value">৳ 0</div><div class="stat-lbl">Stock value (est.)</div></div>
+        </div>
+        <div class="two-col">
+          <div class="card">
+            <h3>⚠️ Needs attention — stock</h3>
+            <div id="db-low" class="mini-list"></div>
+          </div>
+          <div class="card">
+            <h3>⏰ Expiry watch</h3>
+            <div id="db-expiry" class="mini-list"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>🛒 Current order draft</h3>
+          <div id="db-cart-preview" class="mini-list"></div>
+          <button class="btn subtle" id="db-goto-buy">Go to Buy →</button>
+        </div>
+      </section>
+
+      <!-- ── Inventory ── -->
+      <section class="view" id="view-inventory">
+        <header class="view-head">
+          <h1>Inventory</h1>
+          <div class="head-actions">
+            <input type="search" id="inv-search" class="input search" placeholder="🔍 Search medicine…" />
+            <select id="inv-sort" class="input select">
+              <option value="name">Sort: Name</option>
+              <option value="qty-asc">Sort: Stock (low first)</option>
+              <option value="expiry">Sort: Expiry (soonest)</option>
+              <option value="value">Sort: Value (high first)</option>
+            </select>
+            <button class="btn primary" id="inv-add-btn">+ Add from Medex</button>
+          </div>
+        </header>
+        <div id="inv-list" class="inv-list"></div>
+        <div id="inv-empty" class="empty" hidden>
+          <div class="empty-icon">📦</div>
+          <p>No medicines yet.</p>
+          <button class="btn primary" id="inv-empty-add">+ Add your first medicine (from medex.com.bd)</button>
+        </div>
+      </section>
+
+      <!-- ── Buy ── -->
+      <section class="view" id="view-buy">
+        <header class="view-head">
+          <h1>Buy / Order</h1>
+          <span class="hint">Order drafts use settings discount by default. Placing an order deducts stock after you receive it.</span>
+        </header>
+        <div class="buy-grid">
+          <div class="card">
+            <h3>Add items to order</h3>
+            <div class="form-row"><label>Medicine</label><select id="buy-med" class="input select"></select></div>
+            <div class="form-row three">
+              <div><label>Quantity (pcs)</label><input type="number" id="buy-qty" class="input" min="1" value="1" /></div>
+              <div><label>Discount %</label><input type="number" id="buy-discount" class="input" min="0" max="100" /></div>
+              <div><label>Pack info</label><input type="text" id="buy-pack" class="input" readonly placeholder="—" /></div>
+            </div>
+            <div id="buy-preview" class="calc-preview"></div>
+            <button class="btn primary" id="buy-add">Add to order</button>
+          </div>
+          <div class="card">
+            <h3>🧾 Order draft</h3>
+            <div id="cart-list" class="cart-list"></div>
+            <div id="cart-totals"></div>
+            <div class="row-gap">
+              <button class="btn primary" id="cart-place">✔ Place order &amp; save</button>
+              <button class="btn subtle" id="cart-copy">📋 Copy order text</button>
+              <button class="btn danger subtle" id="cart-clear">Clear</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Prescriptions ── -->
+      <section class="view" id="view-prescriptions">
+        <header class="view-head">
+          <h1>Prescriptions</h1>
+          <button class="btn primary" id="px-goto-settings">+ Add / edit prescriptions in Settings</button>
+        </header>
+        <div id="px-list"></div>
+        <div class="card note">
+          ℹ️ Prescriptions are managed under <b>Settings → Prescriptions</b> (password-protected). Here you can recalculate coverage against your current stock, and push any shortfall straight into the Buy order.
+        </div>
+      </section>
+
+      <!-- ── Orders ── -->
+      <section class="view" id="view-orders">
+        <header class="view-head"><h1>Order history</h1></header>
+        <div id="orders-list"></div>
+        <div class="empty" id="orders-empty" hidden>
+          <div class="empty-icon">🧾</div><p>No orders placed yet.</p>
+        </div>
+      </section>
+
+      <!-- ── Settings ── -->
+      <section class="view" id="view-settings">
+        <header class="view-head"><h1>Settings</h1></header>
+
+        <!-- password gate -->
+        <div id="settings-gate" class="gate card">
+          <div class="lock-icon">🔒</div>
+          <h3>Settings are password protected</h3>
+          <p class="hint">Enter the admin password to manage settings, inventory sourcing and prescriptions.</p>
+          <input type="password" id="gate-pw" class="input" placeholder="Admin password" autocomplete="off" />
+          <div class="row-gap">
+            <button class="btn primary" id="gate-unlock">Unlock</button>
+          </div>
+          <div class="err" id="gate-err"></div>
+        </div>
+
+        <div id="settings-content" hidden>
+          <div class="two-col">
+            <div class="card">
+              <h3>🎨 Preferences</h3>
+              <div class="form-row three">
+                <div><label>Default discount %</label><input type="number" id="pf-discount" class="input" min="0" max="100" /></div>
+                <div><label>Default low-stock threshold</label><input type="number" id="pf-threshold" class="input" min="0" /></div>
+                <div><label>Expiry alert (days before)</label><input type="number" id="pf-expirydays" class="input" min="1" /></div>
+              </div>
+              <label class="check"><input type="checkbox" id="pf-notify-low" /> Browser notifications for low stock</label>
+              <label class="check"><input type="checkbox" id="pf-notify-expiry" /> Browser notifications for expiring meds</label>
+              <div class="row-gap">
+                <button class="btn primary" id="pf-save">Save preferences</button>
+                <button class="btn subtle" id="pf-test-notify">🔔 Send test notification</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>🔐 Security</h3>
+              <div class="form-row"><label>Current password</label><input type="password" id="pg-current" class="input" autocomplete="off" /></div>
+              <div class="form-row two">
+                <div><label>New password</label><input type="password" id="pg-new" class="input" autocomplete="off" /></div>
+                <div><label>Repeat new password</label><input type="password" id="pg-new2" class="input" autocomplete="off" /></div>
+              </div>
+              <div class="row-gap">
+                <button class="btn primary" id="pg-change">Change password</button>
+                <button class="btn subtle" id="pg-lock">🔒 Lock app now</button>
+              </div>
+              <div class="err" id="pg-err"></div>
+              <div class="ok" id="pg-ok"></div>
+            </div>
+          </div>
+
+          <div class="card" id="medex-card">
+            <h3>🔎 Add medicine from medex.com.bd</h3>
+            <p class="hint">Search MedEx for a product, pick one, and it will be added to your inventory with price &amp; pack data fetched from the product page.</p>
+            <div class="search-row">
+              <input type="search" id="mx-q" class="input search grow" placeholder="e.g. napa, secalin, monas…" />
+              <select id="mx-type" class="input select">
+                <option value="search">Brand / default</option>
+                <option value="brands">Brand only</option>
+                <option value="generics">Generic name</option>
+              </select>
+              <button class="btn primary" id="mx-go">Search</button>
+            </div>
+            <div id="mx-results" class="mx-results"></div>
+          </div>
+
+          <div class="two-col">
+            <div class="card">
+              <h3>📋 Prescriptions</h3>
+              <p class="hint">Add each prescribed medicine with dose &amp; duration. MediTrack calculates how many pieces the course needs and compares it with your stock.</p>
+              <div class="form-row"><label>Prescription title (e.g. Dr. Rahman — 12 Sep)</label><input type="text" id="px-title" class="input" placeholder="Doctor / date" /></div>
+              <div id="px-items-build"></div>
+              <button class="btn subtle" id="px-add-item">+ Add medicine to this prescription</button>
+              <div class="row-gap"><button class="btn primary" id="px-save">💾 Save prescription</button></div>
+              <div id="px-build-preview" class="calc-preview small"></div>
+              <h3 class="mt">Saved prescriptions</h3>
+              <div id="px-manage"></div>
+            </div>
+
+            <div class="card">
+              <h3>💾 Data</h3>
+              <div class="row-gap wrap">
+                <button class="btn subtle" id="dt-export">⬇ Export data (JSON)</button>
+                <label class="btn subtle file-btn">⬆ Import data<input type="file" id="dt-import" accept="application/json" hidden /></label>
+                <button class="btn danger subtle" id="dt-reset">🗑 Factory reset</button>
+              </div>
+              <p class="hint">Everything is stored locally in your browser (chrome.storage). Nothing is uploaded anywhere.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ══════════ Lock / first-run setup screen ══════════ -->
+  <div id="lockscreen" class="lockscreen" hidden>
+    <div class="lock-card">
+      <div class="lock-logo">💊</div>
+      <h2 id="lock-title">MediTrack BD</h2>
+      <p id="lock-sub">Your medicine inventory is locked</p>
+      <input type="password" id="lock-pw" class="input" placeholder="Password" autocomplete="off" />
+      <input type="password" id="lock-pw2" class="input" placeholder="Repeat password" autocomplete="off" hidden />
+      <button class="btn primary" id="lock-unlock">🔓 Unlock</button>
+      <div class="err" id="lock-err"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ Modal: add / edit inventory item ══════════ -->
+  <div id="modal" class="modal-wrap" hidden>
+    <div class="modal card">
+      <h3 id="modal-title">Add medicine</h3>
+      <div class="mex-summary" id="modal-medex"></div>
+      <div class="form-row two">
+        <div><label>Name</label><input id="f-name" class="input" /></div>
+        <div><label>Strength / form</label><input id="f-strength" class="input" /></div>
+      </div>
+      <div class="form-row two">
+        <div><label>Generic</label><input id="f-generic" class="input" /></div>
+        <div><label>Company</label><input id="f-company" class="input" /></div>
+      </div>
+      <div class="form-row three">
+        <div><label>Stock qty (pcs)</label><input type="number" id="f-qty" class="input" min="0" value="0" /></div>
+        <div><label>Low-stock threshold</label><input type="number" id="f-threshold" class="input" min="0" /></div>
+        <div><label>Unit price (৳)</label><input type="number" id="f-price" class="input" min="0" step="0.01" /></div>
+      </div>
+      <div class="form-row three">
+        <div><label>Pack size (pcs/pack)</label><input type="number" id="f-packsize" class="input" min="1" /></div>
+        <div><label>Strip price (৳)</label><input type="number" id="f-strip" class="input" min="0" step="0.01" /></div>
+        <div><label>Expiry date</label><input type="date" id="f-expiry" class="input" /></div>
+      </div>
+      <div class="mex-hint" id="modal-hint"></div>
+      <div class="row-gap">
+        <button class="btn primary" id="modal-save">Save to inventory</button>
+        <button class="btn subtle" id="modal-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
