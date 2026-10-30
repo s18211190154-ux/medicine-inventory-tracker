@@ -78,6 +78,20 @@ const DEFAULT_SETTINGS = {
   notifyPriceChanges: true,
 };
 
+/* ── fixed admin password: only its SHA-256 hash lives here (no plaintext) ── */
+const PW_HASH = 'f233ad630e8111482b12c04671502bc48ba69829ba616ad88754c8de4b3e4633';
+
+/* ── GitHub-backed storage: public read, owner-only write ── */
+const SERVER = {
+  owner: 's18211190154-ux',
+  repo: 'medicine-inventory-tracker',
+  file: 'data.json',
+};
+const ghUrl = () =>
+  `https://api.github.com/repos/${SERVER.owner}/${SERVER.repo}/contents/${SERVER.file}`;
+
+let lastSha = null; // latest data.json sha for conflict-free commits
+
 let settings = { ...DEFAULT_SETTINGS };
 let inventory = [];
 let orders = [];
@@ -251,15 +265,120 @@ async function boot() {
   }
 }
 
+/* ═════════ GitHub server storage ═════════
+   All data lives in data.json in this public repo:
+   • reading = public (no token needed) — everyone can see it
+   • writing = only with the owner's GitHub token (settings) */
+
+async function getGhToken() {
+  const { gh_token } = await S.get('gh_token');
+  return gh_token || '';
+}
+
+async function ghReadFile() {
+  const token = await getGhToken();
+  const headers = { Accept: 'application/vnd.github+json' };
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const res = await fetch(ghUrl() + '?t=' + Date.now(), { headers });
+  if (!res.ok) throw new Error('GitHub read failed (HTTP ' + res.status + ')');
+  const j = await res.json();
+  const json = new TextDecoder().decode(
+    Uint8Array.from(atob(j.content.replace(/\n/g, '')), (c) => c.charCodeAt(0))
+  );
+  return { data: JSON.parse(json), sha: j.sha };
+}
+
+async function ghWriteFile(payload) {
+  const token = await getGhToken();
+  if (!token) {
+    throw new Error('No GitHub token set → read-only mode. Open Settings and paste your token.');
+  }
+  // always fetch the current sha to avoid clobbering writes
+  const cur = await ghReadFile();
+  const bytes = new TextEncoder().encode(JSON.stringify(payload, null, 2));
+  let bin = '';
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  const res = await fetch(ghUrl(), {
+    method: 'PUT',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: 'Bearer ' + token,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      message: 'MediTrack data update — ' + new Date().toLocaleString('en-GB'),
+      content: btoa(bin),
+      sha: cur.sha,
+    }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error('GitHub write failed (HTTP ' + res.status + ') ' + t.slice(0, 140));
+  }
+  const j = await res.json();
+  lastSha = j.content?.sha || lastSha;
+}
+
 async function loadState() {
-  const data = await S.get([
-    'settings', 'inventory', 'orders', 'prescriptions', 'meditrack_pwHash',
+  const local = await S.get([
+    'settings', 'inventory', 'orders', 'prescriptions',
   ]);
-  settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
-  inventory = Array.isArray(data.inventory) ? data.inventory : [];
-  orders = Array.isArray(data.orders) ? data.orders : [];
-  prescriptions = Array.isArray(data.prescriptions) ? data.prescriptions : [];
-  needsSetup = !data.meditrack_pwHash; // no password yet → first-run setup
+  let serverData = null;
+  try {
+    const srv = await ghReadFile();
+    if (srv.data) {
+      serverData = srv.data;
+      lastSha = srv.sha;
+    }
+  } catch (e) {
+    console.warn('Server load failed:', e);
+  }
+
+  if (serverData) {
+    // server is the source of truth; keep a local mirror for offline starts
+    settings = { ...DEFAULT_SETTINGS, ...(serverData.settings || {}) };
+    inventory = Array.isArray(serverData.inventory) ? serverData.inventory : [];
+    orders = Array.isArray(serverData.orders) ? serverData.orders : [];
+    prescriptions = Array.isArray(serverData.prescriptions) ? serverData.prescriptions : [];
+
+    // one-time migration: server is empty but this device has old data
+    const localHasData = (local.inventory?.length || local.orders?.length || 0) > 0;
+    if (localHasData && !inventory.length && !orders.length) {
+      inventory = local.inventory || [];
+      orders = local.orders || [];
+      saveAll();
+      setTimeout(() => toast('Moved your device data to GitHub ✔'), 600);
+    }
+  } else {
+    // offline / first load before migration → use whatever is on this device
+    settings = { ...DEFAULT_SETTINGS, ...(local.settings || {}) };
+    inventory = Array.isArray(local.inventory) ? local.inventory : [];
+    orders = Array.isArray(local.orders) ? local.orders : [];
+    prescriptions = Array.isArray(local.prescriptions) ? local.prescriptions : [];
+  }
+}
+
+function payload() {
+  return {
+    app: 'MediTrack BD',
+    dataVersion: 1,
+    updatedAt: new Date().toISOString(),
+    inventory,
+    orders,
+    prescriptions,
+    settings,
+  };
+}
+
+let saveChain = Promise.resolve(); // serialize writes, never fire two PUTs at once
+
+/** Persists the full state: local mirror + commit to GitHub (public file). */
+function saveAll() {
+  S.set(payload()); // local cache (offline fallback)
+  saveChain = saveChain
+    .then(() => ghWriteFile(payload()))
+    .catch((err) => toast('⚠ ' + (err.message || 'Save to GitHub failed'), true));
+  return saveChain;
 }
 
 /* ═════════ nav ═════════ */
@@ -283,46 +402,30 @@ function showView(name) {
 
 /* ═════════ settings gate (password protects Settings ONLY) ═════════ */
 
-let needsSetup = false;
 let settingsUnlocked = false;
 
-function readPasswordHash() {
-  return S.get('meditrack_pwHash').then((d) => d.meditrack_pwHash);
-}
-
+/**
+ * The admin password is FIXED — its SHA-256 hash is in the app code.
+ * No setup, no changing: enter the password to manage Settings for this session.
+ */
 async function sha256(text) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Single source of truth for password verification (used by unlock AND change-password). */
 async function verifyPassword(pw) {
-  const stored = await readPasswordHash();
-  if (!stored) return false;
-  return (await sha256(String(pw))) === stored;
+  return (await sha256(String(pw))) === PW_HASH;
 }
 
-/** Decides whether the gate must show, and in which mode (create / unlock). */
+/** Decides whether the gate must show. */
 async function refreshGate() {
   const { unlocked } = await SS.get('unlocked');
-  needsSetup = !(await readPasswordHash());
-  settingsUnlocked = unlocked === true && !needsSetup;
+  settingsUnlocked = unlocked === true;
   const showGate = !settingsUnlocked;
 
   $('#settings-gate').hidden = !showGate;
   $('#settings-content').hidden = showGate;
   if (showGate) {
-    $('#gate-pw2').hidden = !needsSetup;
-    $('#gate-icon').textContent = needsSetup ? '🆕' : '🔒';
-    $('#gate-title').textContent = needsSetup
-      ? 'Create your admin password'
-      : 'Settings are password protected';
-    $('#gate-sub').textContent = needsSetup
-      ? 'First time here — pick a password (min. 6 characters) to protect your Settings. It is stored on this device only, as a SHA-256 hash.'
-      : 'Enter the admin password to manage settings, inventory sourcing and prescriptions.';
-    $('#gate-pw').placeholder = needsSetup ? 'New password' : 'Admin password';
-    $('#gate-unlock').textContent = needsSetup ? '✔ Create password' : 'Unlock';
-    $('#gate-forgot').hidden = needsSetup;
     $('#gate-err').textContent = '';
     setTimeout(() => $('#gate-pw').focus(), 50);
   } else {
@@ -333,28 +436,7 @@ async function refreshGate() {
 async function gateSubmit() {
   const errEl = $('#gate-err');
   errEl.textContent = '';
-  const pw = $('#gate-pw').value;
-
-  if (needsSetup) {
-    if (!pw || pw.length < 6) {
-      errEl.textContent = 'Password must be at least 6 characters.';
-      return;
-    }
-    if (pw !== $('#gate-pw2').value) {
-      errEl.textContent = 'Passwords do not match.';
-      return;
-    }
-    await S.set({ meditrack_pwHash: await sha256(pw) });
-    needsSetup = false;
-    await SS.set({ unlocked: true });
-    $('#gate-pw').value = '';
-    $('#gate-pw2').value = '';
-    await refreshGate();
-    toast('Password created 🔐 — Settings unlocked for this session.');
-    return;
-  }
-
-  if (await verifyPassword(pw)) {
+  if (await verifyPassword($('#gate-pw').value)) {
     await SS.set({ unlocked: true });
     $('#gate-pw').value = '';
     await refreshGate();
@@ -368,14 +450,6 @@ async function gateSubmit() {
 
 $('#gate-unlock').addEventListener('click', gateSubmit);
 $('#gate-pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') gateSubmit(); });
-$('#gate-pw2').addEventListener('keydown', (e) => { if (e.key === 'Enter') gateSubmit(); });
-
-$('#gate-forgot').addEventListener('click', async () => {
-  if (!confirm('Forgot password?\n\nThis wipes ALL locally stored data (inventory, orders, prescriptions, settings AND the password) on this device and reloads the app so you can create a new password. Nothing is on any server, so this is the only way to reset it.\n\nContinue?')) return;
-  await SS.remove('unlocked');
-  await S.clear();
-  window.location.reload();
-});
 
 $('#pg-lock').addEventListener('click', async () => {
   await SS.remove('unlocked');
@@ -406,8 +480,7 @@ function wireButtons() {
   });
 
   // settings
-  $('#pf-save').addEventListener('click', savePreferences);
-  $('#pf-test-notify').addEventListener('click', () =>
+  $('#pf-save').addEventListener('click', savePreferences);  $('#pf-test-notify').addEventListener('click', () =>
     sendNotify('MediTrack — test notification', 'Browser notifications are working ✔')
   );
   $('#pf-sync-prices').addEventListener('click', async () => {
@@ -424,7 +497,33 @@ function wireButtons() {
         : 'Nothing to sync (no inventory yet).'
     );
   });
-  $('#pg-change').addEventListener('click', changePassword);
+  $('#gh-save-token').addEventListener('click', async () => {
+    const tok = $('#gh-token').value.trim();
+    if (!tok) return toast('Paste your GitHub token first.', true);
+    await S.set({ gh_token: tok });
+    $('#gh-token').value = '';
+    $('#gh-status').textContent = 'Token saved on this device.';
+    saveChain = saveChain.then(() => ghWriteFile(payload()))
+      .then(() => {
+        $('#gh-status').textContent = 'Token saved ✔ write access to GitHub working.';
+        toast('Write access connected ✔');
+      })
+      .catch((err) => {
+        $('#gh-status').textContent = '❌ ' + (err.message || 'token failed');
+      });
+  });
+
+  $('#gh-test').addEventListener('click', async () => {
+    const tok = $('#gh-token').value.trim();
+    if (tok) await S.set({ gh_token: tok });
+    $('#gh-status').textContent = '⏳ Testing…';
+    try {
+      await ghWriteFile(payload());
+      $('#gh-status').textContent = '✔ Token works — data.json is being written to GitHub.';
+    } catch (err) {
+      $('#gh-status').textContent = '❌ ' + (err.message || 'failed');
+    }
+  });
   $('#mx-go').addEventListener('click', runMedexSearch);
   $('#mx-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') runMedexSearch(); });
   $('#px-add-item').addEventListener('click', () => addBuilderItem());
@@ -1152,31 +1251,7 @@ function autoGenerateOrder() {
   toast(`⚡ Auto-order generated: ${wanted.size} line(s) — review and place.`);
 }
 
-async function changePassword() {
-  const cur = $('#pg-current').value;
-  const nw = $('#pg-new').value;
-  const nw2 = $('#pg-new2').value;
-  $('#pg-err').textContent = '';
-  $('#pg-ok').textContent = '';
-
-  if (!(await verifyPassword(cur))) {
-    $('#pg-err').textContent = '❌ Current password is wrong.';
-    return;
-  }
-  if (nw.length < 6) {
-    $('#pg-err').textContent = '❌ New password must be at least 6 characters.';
-    return;
-  }
-  if (nw !== nw2) {
-    $('#pg-err').textContent = '❌ New passwords do not match.';
-    return;
-  }
-  await S.set({ meditrack_pwHash: await sha256(nw) });
-  // keep the session unlocked; the next unlock (after Lock settings) uses the new password
-  $('#pg-ok').textContent = '✔ Password changed. Use the NEW password the next time Settings is locked.';
-  ['#pg-current', '#pg-new', '#pg-new2'].forEach((s) => ($(s).value = ''));
-  toast('Password changed 🔐');
-}
+/* ═════════ fixed password — no change-password option by design ═════════ */
 
 /* ── prescription builder (inside settings) ── */
 
@@ -1348,9 +1423,13 @@ async function importData(e) {
 }
 
 async function factoryReset() {
-  if (!confirm('Factory reset deletes ALL inventory, orders, prescriptions and settings. Continue?')) return;
+  if (!confirm('Factory reset deletes ALL data (server data.json too): inventory, orders, prescriptions, settings. Continue?')) return;
   if (!confirm('Are you sure? This cannot be undone.')) return;
+  inventory = [];
+  orders = [];
+  prescriptions = [];
+  settings = { ...DEFAULT_SETTINGS };
+  await saveAll();
   await SS.remove('unlocked');
-  await S.clear();
-  window.location.reload(); // reloads into first-run "create password" screen
+  window.location.reload();
 }

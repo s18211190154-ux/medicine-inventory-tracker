@@ -148,14 +148,12 @@
 
         <!-- password gate (protects Settings ONLY) -->
         <div id="settings-gate" class="gate card" hidden>
-          <div class="lock-icon" id="gate-icon">🔒</div>
-          <h3 id="gate-title">Settings are password protected</h3>
-          <p class="hint" id="gate-sub">Enter the admin password to manage settings, inventory sourcing and prescriptions.</p>
+          <div class="lock-icon">🔒</div>
+          <h3>Settings are password protected</h3>
+          <p class="hint">Enter the admin password to manage settings, inventory sourcing and prescriptions. Dashboard, Inventory, Buy, Orders and Prescriptions stay open for everyone.</p>
           <input type="password" id="gate-pw" class="input" placeholder="Admin password" autocomplete="off" />
-          <input type="password" id="gate-pw2" class="input" placeholder="Repeat password" autocomplete="off" hidden />
           <div class="row-gap" style="justify-content:center">
             <button class="btn primary" id="gate-unlock">Unlock</button>
-            <button class="btn subtle" id="gate-forgot" hidden>Forgot password?</button>
           </div>
           <div class="err" id="gate-err"></div>
         </div>
@@ -180,18 +178,15 @@
             </div>
 
             <div class="card">
-              <h3>🔐 Security</h3>
-              <div class="form-row"><label>Current password</label><input type="password" id="pg-current" class="input" autocomplete="off" /></div>
-              <div class="form-row two">
-                <div><label>New password</label><input type="password" id="pg-new" class="input" autocomplete="off" /></div>
-                <div><label>Repeat new password</label><input type="password" id="pg-new2" class="input" autocomplete="off" /></div>
-              </div>
+              <h3>🔐 Admin / write access</h3>
+              <p class="hint">Reading is <b>public</b>: everyone who opens the site sees inventory, prices, orders and prescriptions (from <code>data.json</code> in the repo). To <b>modify</b>, MediTrack commits to GitHub with your token — only you can do that. Create one at <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">github.com/settings/personal-access-tokens/new</a>: select this repository only, permission <b>Contents: Read and write</b>.</p>
+              <div class="form-row"><label>GitHub token (fine-grained PAT)</label><input type="password" id="gh-token" class="input" placeholder="github_pat_…" autocomplete="off" /></div>
               <div class="row-gap">
-                <button class="btn primary" id="pg-change">Change password</button>
+                <button class="btn primary" id="gh-save-token">💾 Save token</button>
+                <button class="btn subtle" id="gh-test">🧪 Test write access</button>
                 <button class="btn subtle" id="pg-lock">🔒 Lock settings</button>
               </div>
-              <div class="err" id="pg-err"></div>
-              <div class="ok" id="pg-ok"></div>
+              <div class="ok" id="gh-status"></div>
             </div>
           </div>
 
@@ -230,7 +225,7 @@
                 <label class="btn subtle file-btn">⬆ Import data<input type="file" id="dt-import" accept="application/json" hidden /></label>
                 <button class="btn danger subtle" id="dt-reset">🗑 Factory reset</button>
               </div>
-              <p class="hint">Everything is stored locally in your browser (chrome.storage). Nothing is uploaded anywhere.</p>
+              <p class="hint">Data is saved as <code>data.json</code> in this public GitHub repo — everyone can read it; writes need your token above. Export/import gives you a manual backup file.</p>
             </div>
           </div>
         </div>

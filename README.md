@@ -15,6 +15,8 @@ A medicine inventory app with product data sourced live from **[medex.com.bd](ht
 |---|---|
 | 📦 | **Inventory** — track how many pieces (pcs) of each medicine remain, with +/- counters, per-item low-stock thresholds and expiry dates |
 | 🔍 | **Source from medex.com.bd** — in Settings, search MedEx (by brand or generic name), select a product, and the extension fetches its **unit price, strip price and pack size** from the product page and adds it to your inventory |
+| 🌍 | **Public, server-persisted data** — ALL data (inventory, prices, orders, prescriptions, settings) lives in [`data.json`](data.json) in this very repo. Anyone can **view** it on the site. Only the owner can **modify** it, via a GitHub fine-grained token (Contents: Read & write) entered once in Settings |
+| 🔧 | Fixed admin password protects Settings (no password changing by design) |
 | 🔄 | **Auto price sync** — a background job re-fetches every product page daily, updates prices/pack sizes automatically and notifies you when a price changes (manual "Sync now" button also in Settings) |
 | ⚡ | **Auto-order generation** — one click fills the whole order draft for you: prescription shortfalls first, then restock-to-threshold for low/out-of-stock items. Review, place. |
 | 🔔 | **Browser notifications** — daily check + on-demand: low-stock, out-of-stock, expiring-soon and price-change alerts |
@@ -32,13 +34,12 @@ A medicine inventory app with product data sourced live from **[medex.com.bd](ht
 4. Click **Load unpacked** and select this folder.
 5. Click the 💊 extension icon — the full app opens directly in a new tab (no popups, no friction). It also opens automatically on first install.
 
-## 🔑 Password
+## 🔑 Password & access model
 
-- **Scope:** the password protects **Settings only**. Dashboard, Inventory, Buy, Orders and the Prescriptions overview are always usable without a password.
-- **Stored where:** the password is **never saved anywhere as plain text** — not in this repo, not on any server. Only a **SHA-256 hash** is stored **on your own device, in your own browser**:
-  - website version → your browser's local storage (`mt_meditrack_pwHash`, on this site's origin)
-  - extension version → `chrome.storage.local` on your computer
-- **Forgot it?** Click **"Forgot password?"** on the Settings gate — it wipes all locally stored data (inventory, orders, prescriptions, settings, password) and reloads the app so you can create a new one. Since nothing leaves your device, this is the only possible reset.
+- The admin password is **fixed** (decided by the owner, no change-password option). It protects **Settings only** — Dashboard, Inventory, Buy, Orders and the Prescriptions overview are always open.
+- In the code it exists **only as a SHA-256 hash** — the plaintext password is never committed to the repo.
+- **Where data lives:** everything added or edited is committed to `data.json` in this repo. Public = anyone can read it (shared visibility). Writing goes through the GitHub Contents API and requires the owner's token — so visitors are read-only by nature.
+- **Your token:** create a fine-grained token (github.com → Settings → Developer settings → Personal access tokens → Fine-grained), scoped to **this repo only**, permission **Contents: Read and write**, then paste it in Settings → *Admin/write access*. The token is stored device-local only, never committed.
 
 ## 🧭 Using it
 
@@ -46,14 +47,15 @@ A medicine inventory app with product data sourced live from **[medex.com.bd](ht
 - **Inventory** — add medicines from Settings → *Add medicine from medex.com.bd* (e.g. search "napa", pick "Napa 500 mg (Tablet)"). Adjust stock with **−/+**. Set expiry dates to get expiry alerts.
 - **Buy** — choose a medicine, enter quantity (pcs), discount % (defaults from Settings), see the live price preview, add to the order draft, then **Place order** (deducts stock + saves to history) or **Copy order text** to share with a pharmacy.
 - **Prescriptions** — Managed in **Settings → Prescriptions**; the Prescriptions tab shows the live calculation (needed vs stock vs shortfall) and can add shortfalls to the order.
-- **Settings** (password-protected) — preferences (default discount %, low-stock threshold, expiry window, notification toggles), MedEx product search & add, prescriptions, password change, backup/restore, factory reset.
+- **Settings** (password-protected) — preferences (default discount %, low-stock threshold, expiry window, notification toggles), MedEx product search & add, prescriptions, GitHub write-access token, backup/restore, factory reset.
 
 ## 🗂 Project structure
 
 ```
 ├── manifest.json      # MV3 manifest (toolbar icon opens the app directly)
 ├── background.js      # service worker: daily alert check, auto MedEx price sync, notifications
-├── app.{html,css,js}  # the full app (SPA in a new tab)
+├── data.json          # ⬅ the live database: public read, owner-only writes via GitHub API
+├── app.{html,css,js}  # the full app (SPA in a new tab / on GitHub Pages)
 ├── icons/             # generated icons
 └── tools/make-icons.ps1
 ```

@@ -1,0 +1,16 @@
+{
+  "app": "MediTrack BD",
+  "dataVersion": 1,
+  "updatedAt": null,
+  "inventory": [],
+  "orders": [],
+  "prescriptions": [],
+  "settings": {
+    "defaultDiscount": 0,
+    "defaultThreshold": 10,
+    "expiryAlertDays": 30,
+    "notifyLowStock": true,
+    "notifyExpiry": true,
+    "notifyPriceChanges": true
+  }
+}
