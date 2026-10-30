@@ -6,7 +6,68 @@
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
-const S = chrome.storage.local;
+
+/* ── cross-context shims: works inside the extension AND as a plain website ── */
+const hasChrome =
+  typeof chrome !== 'undefined' && !!(chrome.storage && chrome.storage.local);
+
+const S = hasChrome
+  ? chrome.storage.local
+  : {
+      async get(keys) {
+        if (keys == null)
+          keys = Object.keys(localStorage)
+            .filter((k) => k.startsWith('mt_'))
+            .map((k) => k.slice(3));
+        const list = Array.isArray(keys) ? keys : [keys];
+        const out = {};
+        for (const k of list) {
+          const v = localStorage.getItem('mt_' + k);
+          if (v != null) {
+            try { out[k] = JSON.parse(v); } catch { out[k] = v; }
+          }
+        }
+        return out;
+      },
+      async set(obj) {
+        for (const k in obj) localStorage.setItem('mt_' + k, JSON.stringify(obj[k]));
+      },
+      async clear() {
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith('mt_'))
+          .forEach((k) => localStorage.removeItem(k));
+      },
+    };
+
+const SS = hasChrome
+  ? chrome.storage.session
+  : {
+      async get(key) {
+        const v = sessionStorage.getItem(key);
+        return v == null ? {} : { [key]: JSON.parse(v) };
+      },
+      async set(obj) {
+        for (const k in obj) sessionStorage.setItem(k, JSON.stringify(obj[k]));
+      },
+      async remove(...keys) {
+        keys.flat().forEach((k) => sessionStorage.removeItem(k));
+      },
+    };
+
+/** Notification that works in the extension (service worker) AND on a website. */
+async function sendNotify(title, message) {
+  if (hasChrome) {
+    chrome.runtime.sendMessage({ type: 'notify', title, message });
+    return;
+  }
+  try {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') await Notification.requestPermission();
+    if (Notification.permission === 'granted') {
+      new Notification(title, { body: message, icon: 'icons/icon128.png' });
+    }
+  } catch (e) { /* blocked — ignore */ }
+}
 
 const DEFAULT_SETTINGS = {
   defaultDiscount: 0,
@@ -75,10 +136,25 @@ function toast(msg, isErr = false) {
 
 /* ═════════ medex.com.bd scraper ═════════ */
 
+/* Direct fetch works inside the extension (host permission).
+   On a website (GitHub Pages) CORS blocks it → fall back to public CORS proxies. */
+const CORS_PROXIES = [
+  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+];
+
 async function fetchPage(url) {
-  const res = await fetch(url, { credentials: 'omit' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return await res.text();
+  try {
+    const res = await fetch(url, { credentials: 'omit' });
+    if (res.ok) return await res.text();
+  } catch (e) { /* CORS / network — try proxies */ }
+  for (const mkProxy of CORS_PROXIES) {
+    try {
+      const res = await fetch(mkProxy(url));
+      if (res.ok) return await res.text();
+    } catch (e) { /* next proxy */ }
+  }
+  throw new Error('unreachable');
 }
 
 function parseSearchResults(html) {
@@ -166,6 +242,13 @@ async function boot() {
   wireButtons();
   await checkLock();
   renderAll();
+
+  if (!hasChrome) {
+    // website mode: no service worker → run the periodic jobs in this tab
+    localCheckAlerts();
+    setInterval(localCheckAlerts, 6 * 60 * 60 * 1000);      // alerts every 6 h
+    setInterval(syncPricesNow, 12 * 60 * 60 * 1000);       // price sync every 12 h
+  }
 }
 
 async function loadState() {
@@ -217,7 +300,7 @@ function readPasswordHash() {
 }
 
 async function checkLock() {
-  const { unlocked } = await chrome.storage.session.get('unlocked');
+  const { unlocked } = await SS.get('unlocked');
   needsSetup = !(await readPasswordHash());
   setLockMode();
   const locked = needsSetup || !unlocked;
@@ -253,7 +336,7 @@ async function unlock(password) {
       return false;
     }
   }
-  await chrome.storage.session.set({ unlocked: true });
+  await SS.set({ unlocked: true });
   $('#lockscreen').hidden = true;
   errEl.textContent = '';
   $('#lock-pw').value = '';
@@ -281,7 +364,7 @@ $('#gate-pw').addEventListener('keydown', (e) => {
 });
 
 $('#pg-lock').addEventListener('click', async () => {
-  await chrome.storage.session.remove('unlocked');
+  await SS.remove('unlocked');
   await checkLock();
   showView('dashboard');
   toast('App locked.');
@@ -312,17 +395,13 @@ function wireButtons() {
   // settings
   $('#pf-save').addEventListener('click', savePreferences);
   $('#pf-test-notify').addEventListener('click', () =>
-    chrome.runtime.sendMessage({
-      type: 'notify',
-      title: 'MediTrack — test notification',
-      message: 'Browser notifications are working ✔',
-    })
+    sendNotify('MediTrack — test notification', 'Browser notifications are working ✔')
   );
   $('#pf-sync-prices').addEventListener('click', async () => {
     const btn = $('#pf-sync-prices');
     btn.disabled = true;
     btn.textContent = '⏳ Syncing…';
-    const res = await chrome.runtime.sendMessage({ type: 'refreshPrices' });
+    const res = await syncPricesNow();
     btn.disabled = false;
     btn.textContent = '🔄 Sync MedEx prices now';
     renderAll();
@@ -494,15 +573,78 @@ function adjustQty(item, delta) {
   saveAll();
   renderAll();
   if (itemStatus(item) !== 'ok' && delta < 0) {
-    chrome.runtime.sendMessage({
-      type: 'notify',
-      title: 'MediTrack — stock update',
-      message:
-        item.qty === 0
-          ? `${item.name} is now OUT OF STOCK.`
-          : `${item.name}: ${item.qty} pcs left (threshold ${itemThreshold(item)}).`,
-    });
+    sendNotify(
+      'MediTrack — stock update',
+      item.qty === 0
+        ? `${item.name} is now OUT OF STOCK.`
+        : `${item.name}: ${item.qty} pcs left (threshold ${itemThreshold(item)}).`
+    );
   }
+}
+
+/* ═════════ local runtime (website mode: no service worker available) ═════════ */
+
+/** Same logic as the background worker's checkAlerts(), running in-page. */
+async function localCheckAlerts() {
+  const { lastAlertDay } = await S.get('lastAlertDay');
+  const today = new Date().toISOString().slice(0, 10);
+  const lowItems = [];
+  const expiryItems = [];
+  for (const item of inventory) {
+    const status = itemStatus(item);
+    if (status === 'out') lowItems.push(`${item.name} — OUT OF STOCK`);
+    else if (status === 'low') lowItems.push(`${item.name} — ${item.qty} pcs left`);
+    if (item.expiry) {
+      const d = daysUntil(item.expiry);
+      if (d < 0) expiryItems.push(`${item.name} — EXPIRED ${-d} day(s) ago`);
+      else if (d <= (settings.expiryAlertDays ?? 30))
+        expiryItems.push(`${item.name} — expires in ${d} day(s)`);
+    }
+  }
+  const lines = [];
+  if (settings.notifyLowStock !== false && lowItems.length)
+    lines.push(`⚠️ Low stock (${lowItems.length}):`, ...lowItems.slice(0, 6));
+  if (settings.notifyExpiry !== false && expiryItems.length)
+    lines.push(`⏰ Expiry alert (${expiryItems.length}):`, ...expiryItems.slice(0, 4));
+  if (!lines.length) return;
+  if (lastAlertDay === today) return; // one combined alert per day
+  await S.set({ lastAlertDay: today });
+  sendNotify('MediTrack — Inventory Alerts', lines.join('\n'));
+}
+
+/** Manual/auto price sync using the same parsers as the background worker. */
+async function syncPricesNow() {
+  let checked = 0;
+  const changes = [];
+  for (const item of inventory) {
+    if (!item.url) continue;
+    try {
+      const prod = await medexProduct(item.url);
+      checked++;
+      if (
+        prod.unitPrice != null &&
+        item.unitPrice != null &&
+        prod.unitPrice !== item.unitPrice
+      ) {
+        changes.push(`${item.name}: ${fmt(item.unitPrice)} → ${fmt(prod.unitPrice)} per pc`);
+      }
+      if (prod.unitPrice != null) item.unitPrice = prod.unitPrice;
+      if (prod.packSize != null) item.packSize = prod.packSize;
+      if (prod.stripPrice != null) item.stripPrice = prod.stripPrice;
+    } catch (e) { /* skip unreachable product */ }
+  }
+  if (checked) {
+    await S.set({ lastPriceSync: new Date().toISOString() });
+    await saveAll();
+    renderAll();
+  }
+  if (changes.length && settings.notifyPriceChanges !== false) {
+    sendNotify(
+      'MediTrack — MedEx prices updated',
+      `${changes.length} change(s):\n` + changes.slice(0, 5).join('\n')
+    );
+  }
+  return { updated: changes.length, checked };
 }
 
 function removeItem(item) {
@@ -1193,7 +1335,7 @@ async function importData(e) {
 async function factoryReset() {
   if (!confirm('Factory reset deletes ALL inventory, orders, prescriptions and settings. Continue?')) return;
   if (!confirm('Are you sure? This cannot be undone.')) return;
-  await chrome.storage.session.remove('unlocked');
+  await SS.remove('unlocked');
   await S.clear();
   window.location.reload(); // reloads into first-run "create password" screen
 }

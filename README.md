@@ -1,6 +1,9 @@
 # 💊 MediTrack BD — Medicine Inventory & Order Tracker
 
-A Chrome extension for tracking personal/home medicine inventory with product data sourced live from **[medex.com.bd](https://medex.com.bd)**, browser notifications for low-stock and expiry, a purchase-order builder with discount calculation, and a prescription calculator.
+A medicine inventory app with product data sourced live from **[medex.com.bd](https://medex.com.bd)**, browser notifications for low-stock and expiry, a purchase-order builder with discount calculation, and a prescription calculator. Works **two ways**:
+
+1. **🌐 Live website** — [https://s18211190154-ux.github.io/medicine-inventory-tracker/](https://s18211190154-ux.github.io/medicine-inventory-tracker/) — open and use, nothing to install. (MedEx data routes through a public CORS proxy because browsers block direct cross-site fetches.)
+2. **🧩 Chrome extension** — recommended experience: fetches MedEx directly (faster, no proxy), runs its own background auto-refresh even when the site isn't open.
 
 > ⚠️ **Disclaimer:** This is a personal inventory helper, not a pharmacy or medical service. It does not sell medicine or process payments — it only builds an order list for you to send/take to a pharmacy. Always follow your doctor's prescription.
 
@@ -21,7 +24,7 @@ A Chrome extension for tracking personal/home medicine inventory with product da
 | 💾 | **Order history** — every placed order is saved, expandable and copyable |
 | ↕️ | **Import / export** — full JSON backup & restore; everything stays local in `chrome.storage` |
 
-## 🚀 Install (Load unpacked)
+## 🚀 Install the extension (Load unpacked)
 
 1. Download this repo (or `git clone`).
 2. Open Chrome → `chrome://extensions`.
