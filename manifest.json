@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MediTrack BD — Medicine Inventory & Order Tracker",
   "short_name": "MediTrack",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Track medicine inventory, get low-stock & expiry notifications, auto-refresh MedEx prices, one-click order generation — product data sourced from medex.com.bd.",
   "minimum_chrome_version": "102",
   "icons": {

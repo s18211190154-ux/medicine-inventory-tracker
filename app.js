@@ -240,7 +240,7 @@ async function boot() {
   await loadState();
   wireNav();
   wireButtons();
-  await checkLock();
+  await refreshGate();
   renderAll();
 
   if (!hasChrome) {
@@ -281,93 +281,106 @@ function showView(name) {
   renderAll();
 }
 
-/* ═════════ lock screen & settings gate ═════════ */
+/* ═════════ settings gate (password protects Settings ONLY) ═════════ */
 
 let needsSetup = false;
-
-function setLockMode() {
-  $('#lock-pw2').hidden = !needsSetup;
-  $('#lock-title').textContent = needsSetup ? 'Welcome 👋' : 'MediTrack BD';
-  $('#lock-sub').textContent = needsSetup
-    ? 'Create your own admin password (min. 6 characters) to secure your inventory.'
-    : 'Your medicine inventory is locked';
-  $('#lock-unlock').textContent = needsSetup ? '✔ Create password & start' : '🔓 Unlock';
-  $('#lock-pw').placeholder = needsSetup ? 'New password' : 'Password';
-}
+let settingsUnlocked = false;
 
 function readPasswordHash() {
   return S.get('meditrack_pwHash').then((d) => d.meditrack_pwHash);
 }
 
-async function checkLock() {
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Single source of truth for password verification (used by unlock AND change-password). */
+async function verifyPassword(pw) {
+  const stored = await readPasswordHash();
+  if (!stored) return false;
+  return (await sha256(String(pw))) === stored;
+}
+
+/** Decides whether the gate must show, and in which mode (create / unlock). */
+async function refreshGate() {
   const { unlocked } = await SS.get('unlocked');
   needsSetup = !(await readPasswordHash());
-  setLockMode();
-  const locked = needsSetup || !unlocked;
-  $('#lockscreen').hidden = !locked;
-  $('#settings-gate').hidden = !(locked && !needsSetup);
-  $('#settings-content').hidden = locked;
-  if (locked) setTimeout(() => $('#lock-pw').focus(), 50);
-}
+  settingsUnlocked = unlocked === true && !needsSetup;
+  const showGate = !settingsUnlocked;
 
-async function unlock(password) {
-  const errEl = $('#lock-err');
-  if (needsSetup) {
-    // first-run: CREATE a new password
-    if (!password || password.length < 6) {
-      errEl.textContent = 'Password must be at least 6 characters.';
-      return false;
-    }
-    if (password !== $('#lock-pw2').value) {
-      errEl.textContent = 'Passwords do not match.';
-      return false;
-    }
-    await S.set({ meditrack_pwHash: await sha256(password) });
-    needsSetup = false;
-    setLockMode();
-    $('#lock-pw2').value = '';
-    toast('Password created 🔐');
+  $('#settings-gate').hidden = !showGate;
+  $('#settings-content').hidden = showGate;
+  if (showGate) {
+    $('#gate-pw2').hidden = !needsSetup;
+    $('#gate-icon').textContent = needsSetup ? '🆕' : '🔒';
+    $('#gate-title').textContent = needsSetup
+      ? 'Create your admin password'
+      : 'Settings are password protected';
+    $('#gate-sub').textContent = needsSetup
+      ? 'First time here — pick a password (min. 6 characters) to protect your Settings. It is stored on this device only, as a SHA-256 hash.'
+      : 'Enter the admin password to manage settings, inventory sourcing and prescriptions.';
+    $('#gate-pw').placeholder = needsSetup ? 'New password' : 'Admin password';
+    $('#gate-unlock').textContent = needsSetup ? '✔ Create password' : 'Unlock';
+    $('#gate-forgot').hidden = needsSetup;
+    $('#gate-err').textContent = '';
+    setTimeout(() => $('#gate-pw').focus(), 50);
   } else {
-    const hash = await sha256(password);
-    if (hash !== (await readPasswordHash())) {
-      errEl.textContent = 'Incorrect password.';
-      $('#lock-pw').classList.add('shake');
-      setTimeout(() => $('#lock-pw').classList.remove('shake'), 600);
-      return false;
-    }
+    fillSettingsForm();
   }
-  await SS.set({ unlocked: true });
-  $('#lockscreen').hidden = true;
-  errEl.textContent = '';
-  $('#lock-pw').value = '';
-  $('#settings-gate').hidden = true;
-  $('#settings-content').hidden = false;
-  fillSettingsForm();
-  renderAll();
-  return true;
 }
 
-$('#lock-unlock').addEventListener('click', () => unlock($('#lock-pw').value));
-$('#lock-pw').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') unlock($('#lock-pw').value);
-});
+async function gateSubmit() {
+  const errEl = $('#gate-err');
+  errEl.textContent = '';
+  const pw = $('#gate-pw').value;
 
-$('#gate-unlock').addEventListener('click', async () => {
-  await unlock($('#gate-pw').value);
-  if (!($('#lockscreen').hidden && $('#settings-content').hidden))
-    $('#gate-err').textContent = 'Incorrect password.';
-  $('#gate-pw').value = '';
-});
+  if (needsSetup) {
+    if (!pw || pw.length < 6) {
+      errEl.textContent = 'Password must be at least 6 characters.';
+      return;
+    }
+    if (pw !== $('#gate-pw2').value) {
+      errEl.textContent = 'Passwords do not match.';
+      return;
+    }
+    await S.set({ meditrack_pwHash: await sha256(pw) });
+    needsSetup = false;
+    await SS.set({ unlocked: true });
+    $('#gate-pw').value = '';
+    $('#gate-pw2').value = '';
+    await refreshGate();
+    toast('Password created 🔐 — Settings unlocked for this session.');
+    return;
+  }
 
-$('#gate-pw').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('#gate-unlock').click();
+  if (await verifyPassword(pw)) {
+    await SS.set({ unlocked: true });
+    $('#gate-pw').value = '';
+    await refreshGate();
+    toast('Settings unlocked ✔');
+  } else {
+    errEl.textContent = 'Incorrect password.';
+    $('#gate-pw').value = '';
+    $('#gate-pw').focus();
+  }
+}
+
+$('#gate-unlock').addEventListener('click', gateSubmit);
+$('#gate-pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') gateSubmit(); });
+$('#gate-pw2').addEventListener('keydown', (e) => { if (e.key === 'Enter') gateSubmit(); });
+
+$('#gate-forgot').addEventListener('click', async () => {
+  if (!confirm('Forgot password?\n\nThis wipes ALL locally stored data (inventory, orders, prescriptions, settings AND the password) on this device and reloads the app so you can create a new password. Nothing is on any server, so this is the only way to reset it.\n\nContinue?')) return;
+  await SS.remove('unlocked');
+  await S.clear();
+  window.location.reload();
 });
 
 $('#pg-lock').addEventListener('click', async () => {
   await SS.remove('unlocked');
-  await checkLock();
-  showView('dashboard');
-  toast('App locked.');
+  await refreshGate();
+  toast('Settings locked 🔒 — Dashboard, Inventory, Buy, Orders and Prescriptions remain usable.');
 });
 
 /* ═════════ generic button wiring ═════════ */
@@ -1143,8 +1156,10 @@ async function changePassword() {
   const cur = $('#pg-current').value;
   const nw = $('#pg-new').value;
   const nw2 = $('#pg-new2').value;
-  const { meditrack_pwHash } = await S.get('meditrack_pwHash');
-  if ((await sha256(cur)) !== meditrack_pwHash) {
+  $('#pg-err').textContent = '';
+  $('#pg-ok').textContent = '';
+
+  if (!(await verifyPassword(cur))) {
     $('#pg-err').textContent = '❌ Current password is wrong.';
     return;
   }
@@ -1157,8 +1172,8 @@ async function changePassword() {
     return;
   }
   await S.set({ meditrack_pwHash: await sha256(nw) });
-  $('#pg-err').textContent = '';
-  $('#pg-ok').textContent = '✔ Password changed.';
+  // keep the session unlocked; the next unlock (after Lock settings) uses the new password
+  $('#pg-ok').textContent = '✔ Password changed. Use the NEW password the next time Settings is locked.';
   ['#pg-current', '#pg-new', '#pg-new2'].forEach((s) => ($(s).value = ''));
   toast('Password changed 🔐');
 }

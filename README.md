@@ -34,7 +34,11 @@ A medicine inventory app with product data sourced live from **[medex.com.bd](ht
 
 ## 🔑 Password
 
-There is **no default password** in this repo. On first launch the app asks you to **create your own admin password** (min. 6 characters). It is stored only as a SHA-256 hash in local `chrome.storage` — the plaintext never leaves your device. Change it anytime in **Settings → Security**.
+- **Scope:** the password protects **Settings only**. Dashboard, Inventory, Buy, Orders and the Prescriptions overview are always usable without a password.
+- **Stored where:** the password is **never saved anywhere as plain text** — not in this repo, not on any server. Only a **SHA-256 hash** is stored **on your own device, in your own browser**:
+  - website version → your browser's local storage (`mt_meditrack_pwHash`, on this site's origin)
+  - extension version → `chrome.storage.local` on your computer
+- **Forgot it?** Click **"Forgot password?"** on the Settings gate — it wipes all locally stored data (inventory, orders, prescriptions, settings, password) and reloads the app so you can create a new one. Since nothing leaves your device, this is the only possible reset.
 
 ## 🧭 Using it
 
